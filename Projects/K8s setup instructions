@@ -1,0 +1,156 @@
+# k8s Project 1
+
+### **Kubernetes Cluster Setup Guide**
+
+### Step 1 (Environment Preparation):
+
+_Run these commands on both the Control Plane and all Worker nodes. Configured Kernel Modules as kubernetes requires specific modules to handle bridge traffic and overlay networking. Overlay is required for the container runtime to use overlay filesystems, and br_netfilter allows the bridge to filter traffic via iptables, which is essential for Kubernetes networking._
+
+
+`cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf`
+
+`overlay`
+
+`br_netfilter`
+
+`EOF`
+
+
+`sudo modprobe overlay`
+
+`sudo modprobe br_netfilter`
+
+---------------------------------------------------------------------------------
+
+### Step 2 (Network Parameter Tuning): 
+_Next, I set ip_forward to 1 and bridge-nf-call to 1. Setting ip_forward to 1 allows the Linux node to act as a router for container traffic. The bridge-nf-call parameters ensure that bridged packets are processed by iptables for filtering and port forwarding._
+
+
+`cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf`
+
+`net.bridge.bridge-nf-call-iptables = 1`
+
+`net.bridge.bridge-nf-call-ip6tables = 1`
+
+`net.ipv4.ip_forward = 1`
+
+`EOF`
+
+`sudo sysctl --system`
+
+--------------------------------------------------------------------------------------------------------
+
+### Step 3 (Install & Configure Containerd (CRI)):
+
+_Kubernetes needs a Container Runtime Interface. I used "containerd", generated default configuration and Cgroup driver to system._
+
+_Enabled SystemdCgroup so that containerd and kubelet use the same cgroup manager(systemd). Using different managers can cause system instability under resource pressure._
+
+`sudo apt-get update`
+
+`sudo apt-get install containerd -y`
+
+`sudo mkdir -p /etc/containerd`
+
+`sudo containerd config default | sudo tee /etc/containerd/config.toml`
+
+`sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml`
+
+`sudo systemctl restart containerd`
+
+`sudo systemctl enable containerd`
+
+---------------------------------------------------------------------------------------------------------------------
+
+### Step 4 (Disable Swap):
+
+_Kubernetes is not designed to handle swap memory. If swap is active, the kubelet cannot accurately track resource usage, leading to improper pod scheduling and performance degradation._
+
+`sudo swapoff -a`
+
+`sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab`
+
+`sudo systemctl daemon-reload`
+
+
+------------------------------------------------------------------------------------------------------------------------------
+### Step 5 (Install Kubernetes Components):
+
+`sudo apt-get update`
+
+`sudo apt-get install -y apt-transport-https ca-certificates curl gpg`
+
+`sudo mkdir -p -m 755 /etc/apt/keyrings`
+
+--------------------------------------------------------------------------------------------------------------------------------------
+### Step 6 (Add Kubernetes repository):
+
+`curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg`
+
+`echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list`
+
+`sudo apt-get update`
+
+`sudo apt-get install -y kubelet kubeadm kubectl`
+
+`sudo apt-mark hold kubelet kubeadm kubectl`
+
+
+_Note that "apt-mark hold" prevents the system from automatically updating these packages, which protects the cluster from accidental version mismatches during OS updates._
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+### Step 7: (Control Plane Setup (Control Plane Only)):
+_Initialize the Cluster_
+_Replace `"<control-plane-ip>"` with the internal IP of your master node._
+_The command below initializes the API server, etcd, and core controllers. The "--pod-network-cidr" is required for Calico to manage internal pod IP ranges._
+
+`sudo kubeadm init --pod-network-cidr=192.168.0.0/16 --apiserver-advertise-address=<control-plane-ip>`
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+### Step 8 (Configured local access to allow the current non-root user to use "kubectl" to manage the cluster without needing "sudo"):
+
+
+`mkdir -p $HOME/.kube`
+
+`sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config`
+
+`sudo chown $(id -u):$(id -g) $HOME/.kube/config`
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+### Step 9: Install Calico Networking as kubernetes nodes stay in a "NotReady" status until a Pod Network (CNI) is installed to facilitate communication between pods across different nodes.
+
+`kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.30.0/manifests/calico.yaml`
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+### Step 10: Join Worker Nodes (Worker Nodes Only):
+
+_Run the join command provided in the output of the "kubeadm init" command. This command creates a secure handshake between the worker and the control plane, registering the worker node into the cluster._
+
+`sudo kubeadm join <control-plane-ip>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>`
+
+
+---
+
+### Step 11: Post-Setup & Aliases (All Nodes):
+
+_Set alias 'k' for kubectl_
+
+`echo 'alias k=kubectl' >>~/.bashrc`
+`echo 'complete -o default -F __start_kubectl k' >>~/.bashrc`
+`source ~/.bashrc`
+
+
+###On the Control Plane, run the ff for verification purposes:
+
+`kubectl get nodes`
