@@ -1,4 +1,4 @@
-# Kubernetes CKA Study & Homelab Projects
+# Kubernetes Studies & Homelab Projects
 
 This repository contains hands-on Kubernetes projects and infrastructure configurations completed while studying for the Certified Kubernetes Administrator (CKA) exam.
 
